@@ -60,22 +60,36 @@ namespace CI_2
             FillSudoku();
             // After this, the sudoku array has been initiated, every block contains numbers one through nine, having kept in mind the constraint of blocks, and without having moved the fixated spots.
 
+            #region Random Restart
             // RandomRestart();
             //PrintRRHCResults();
+            #endregion
 
+            #region ILS
             ILS_Results = new Dictionary<int, int>();
             ILS_Results.Add( 2, int.MaxValue );
             ILS_Results.Add( 5, int.MaxValue );
             ILS_Results.Add( 10, int.MaxValue );
             ILS_Results.Add( 50, int.MaxValue );
             ILS_Results.Add( 100, int.MaxValue );
+            ILS_Results.Add( 1000, int.MaxValue );
+            ILS_Results.Add( 10000, int.MaxValue );
 
-            Parallel.ForEach<int>( ILS_Results.Keys, x => ILS( x ) );
+            List<int> keys = ILS_Results.Keys.ToList();
+            foreach ( int key in keys )
+                ILS( key );
 
             PrintILSResults();
+            #endregion
+
+            #region Tabu
+
+            #endregion
 
             Console.ReadLine();
         }
+
+        #region Algorithms
 
         static void RandomRestart()
         {
@@ -122,7 +136,7 @@ namespace CI_2
         static void ILS( int S )
         {
             bool opResult = true;
-            int[] currentBest = new int[Nsq*Nsq];
+            int[] currentBest = new int[ Nsq * Nsq ];
             BackupSudoku( ref currentBest );
 
             for ( int i = 0; i < ILS_MaxRestarts; i++ )
@@ -144,7 +158,7 @@ namespace CI_2
                 }
                 else
                 {
-                    ILS_Results[S] = Math.Min( ILS_Results[S], FullEvaluation );
+                    ILS_Results[ S ] = Math.Min( ILS_Results[ S ], FullEvaluation );
                     // Reset to the previous optimum, and try again
                     if ( FullEvaluation > ILS_Best )
                         RestoreBackup( ref currentBest );
@@ -166,6 +180,10 @@ namespace CI_2
         {
 
         }
+
+        #endregion
+
+        #region Operators
 
         static bool OperatorEval()
         {
@@ -310,6 +328,48 @@ namespace CI_2
             //return false;
         }
 
+        #endregion
+
+        #region Printing
+
+        static void Print()
+        {
+            for ( int i = 0; i < Nsq; i++ )
+            {
+                for ( int j = 0; j < Nsq; j++ )
+                {
+                    if ( Sudoku[ i * Nsq + j ] == 0 )
+                        Console.Write( "." );
+                    else
+                        Console.Write( Sudoku[ i * Nsq + j ] );
+                }
+                Console.Write( "\n" );
+            }
+            Console.WriteLine( "" );
+        }
+
+        static void PrintRRHCResults()
+        {
+            Console.WriteLine( "Have we found the solution?\n{0}", RRHC_OptFound );
+            Console.WriteLine( "How many Restarts did it take?\n{0}", RRHC_Restarts );
+            Console.WriteLine( "How many States did we expand?\n{0}", RRHC_States_Global );
+            Console.WriteLine( "How many States did we expand per Restart?\n{0}", RRHC_States_Avg );
+            Console.WriteLine( "How close did we get?\n{0}", RRHC_Best_So_Far );
+        }
+
+        static void PrintILSResults()
+        {
+            Console.WriteLine( "Solution?\n{0}", ILS_OptFound );
+            foreach ( int key in ILS_Results.Keys )
+                Console.WriteLine( "\nBest Score for S = {0}: {1}", key, ILS_Results[ key ] );
+        }
+
+        static void PrintTabuResults() { }
+
+        #endregion
+
+        #region Sudoku Functions
+
         static void Switch( int Block, int Idx1, int Idx2 )
         {
             List<int> openIdcs = OpenIdxPerBlock[ Block ];
@@ -353,7 +413,7 @@ namespace CI_2
 
             return result;
         }
-
+        
         static int[] GetBlockIndices( int which )
         {
             int[] result = new int[ Nsq ];
@@ -422,7 +482,7 @@ namespace CI_2
             for ( int i = 0; i < Nsq * Nsq; i++ )
                 Sudoku[ i ] = toRestoreFrom[ i ];
         }
-        
+
         static void Shuffle<T>( IList<T> list )
         {
             int n = list.Count;
@@ -435,41 +495,7 @@ namespace CI_2
                 list[ n ] = value;
             }
         }
-
-        static void Print()
-        {
-            for ( int i = 0; i < Nsq; i++ )
-            {
-                for ( int j = 0; j < Nsq; j++ )
-                {
-                    if ( Sudoku[ i * Nsq + j ] == 0 )
-                        Console.Write( "." );
-                    else
-                        Console.Write( Sudoku[ i * Nsq + j ] );
-                }
-                Console.Write( "\n" );
-            }
-            Console.WriteLine( "" );
-        }
-
-        static void PrintRRHCResults()
-        {
-            Console.WriteLine( "Have we found the solution?\n{0}", RRHC_OptFound );
-            Console.WriteLine( "How many Restarts did it take?\n{0}", RRHC_Restarts );
-            Console.WriteLine( "How many States did we expand?\n{0}", RRHC_States_Global );
-            Console.WriteLine( "How many States did we expand per Restart?\n{0}", RRHC_States_Avg );
-            Console.WriteLine( "How close did we get?\n{0}", RRHC_Best_So_Far );
-        }
-
-        static void PrintILSResults()
-        {
-            Console.WriteLine( "Solution?\n{0}", ILS_OptFound );
-            foreach(int key in ILS_Results.Keys)
-            Console.WriteLine( "\nBest Score for S = {0}: {1}", key, ILS_Results[key] );
-        }
-
-        static void PrintTabuResults() { }
-
+        
         static int[] ParseTxtToArray( string Path )
         {
             string[] totString = new string[ Nsq * Nsq ];
@@ -504,5 +530,7 @@ namespace CI_2
 
             return result;
         }
+        
+        #endregion
     }
 }
