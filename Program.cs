@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.IO;
+using System.Diagnostics;
 
 
 namespace CI_2
@@ -17,19 +18,24 @@ namespace CI_2
         static string SudokuPath = "C:\\Users\\matti\\Documents\\GitHub\\CI2\\TestSudokuVeryEz.txt";
         static List<int>[] OpenIdxPerBlock, ClosedNumsPerBlock, OpenNumsPerBlock;
 
-        static bool RRHC_OptFound, ILS_OptFound;
-        static int RRHC_Restarts, RRHC_States_Global, RRHC_States_Local, RRHC_States_Avg, RRHC_Best_So_Far = int.MaxValue;
-        static int ILS_Restarts, ILS_States_Global, ILS_States_Local, ILS_States_Avg;
-        static int ILS_Best = int.MaxValue;
-        static Dictionary<int, int> ILS_Results;
+        static bool RRHC_OptFound, ILS_OptFound, Tabu_OptFound;
+        static int RRHC_Restarts, RRHC_States_Global, RRHC_States_Local, RRHC_States_Avg, RRHC_Best = int.MaxValue;
+        static int ILS_Restarts, ILS_States_Global, ILS_States_Local, ILS_States_Avg, ILS_Best = int.MaxValue;
+        static int Tabu_Restarts, Tabu_States_Global, Tabu_States_Local, Tabu_States_Avg, Tabu_Best = int.MaxValue;
+        static Dictionary<int, int> ILS_Results, Tabu_Results;
+        static Queue<Tuple<int,int>> Tabu_List;
+        static Stopwatch runtime;
+
 
         static void Main( string[] args )
         {
             Nsq = N * N;
             rng = new Random();
 
+            // Reads the txt file to fill in the Sudoku puzzle.
             ReadSudoku();
 
+            // Some lists containing data about the Sudoku.
             OpenIdxPerBlock = new List<int>[ Nsq ];
             ClosedNumsPerBlock = new List<int>[ Nsq ];
             OpenNumsPerBlock = new List<int>[ Nsq ];
@@ -58,6 +64,7 @@ namespace CI_2
             }
 
             FillSudoku();
+            Console.WriteLine( FullEvaluate() );
             // After this, the sudoku array has been initiated, every block contains numbers one through nine, having kept in mind the constraint of blocks, and without having moved the fixated spots.
 
             #region Random Restart
@@ -66,26 +73,50 @@ namespace CI_2
             #endregion
 
             #region ILS
-            ILS_Results = new Dictionary<int, int>();
-            ILS_Results.Add( 2, int.MaxValue );
-            ILS_Results.Add( 5, int.MaxValue );
-            ILS_Results.Add( 10, int.MaxValue );
-            ILS_Results.Add( 50, int.MaxValue );
-            ILS_Results.Add( 100, int.MaxValue );
-            ILS_Results.Add( 1000, int.MaxValue );
-            ILS_Results.Add( 10000, int.MaxValue );
+            //ILS_Results = new Dictionary<int, int>();
+            //ILS_Results.Add( 2, int.MaxValue );
+            //ILS_Results.Add( 5, int.MaxValue );
+            //ILS_Results.Add( 10, int.MaxValue );
+            //ILS_Results.Add( 50, int.MaxValue );
+            //ILS_Results.Add( 100, int.MaxValue );
+            //ILS_Results.Add( 1000, int.MaxValue );
+            //ILS_Results.Add( 10000, int.MaxValue );
 
-            List<int> keys = ILS_Results.Keys.ToList();
-            foreach ( int key in keys )
-                ILS( key );
+            //List<int> keys = ILS_Results.Keys.ToList();
+            //foreach ( int key in keys )
+            //    ILS( key );
 
-            PrintILSResults();
+            //PrintILSResults();
             #endregion
 
             #region Tabu
+            Tabu_Results = new Dictionary<int, int>();
+            //Tabu_Results.Add( 2, int.MaxValue );
+            //Tabu_Results.Add( 5, int.MaxValue );
+            //Tabu_Results.Add( 10, int.MaxValue );
+            //Tabu_Results.Add( 50, int.MaxValue );
+            //Tabu_Results.Add( 100, int.MaxValue );
+            //Tabu_Results.Add( 1000, int.MaxValue );
+            //Tabu_Results.Add( 10000, int.MaxValue );
+            Tabu_Results.Add( 27, int.MaxValue );
+            for ( int i = 0; i < 200; i += 10 )
+            {
+                Tabu_Results.Add( i + 100, int.MaxValue );
+            }
 
+            List<int> keys = Tabu_Results.Keys.ToList();
+            foreach ( int key in keys )
+            {
+                ReadSudoku();
+                FillSudoku();
+                TabuSearch( key );
+            }
+
+            Print();
+            PrintTabuResults();
             #endregion
 
+            ConsoleKeyInfo next = Console.ReadKey();
             Console.ReadLine();
         }
 
@@ -112,7 +143,7 @@ namespace CI_2
 
                 // Check whether it was a local optimum or the solution.
                 int FullEvaluation = FullEvaluate();
-                RRHC_Best_So_Far = Math.Min( FullEvaluation, RRHC_Best_So_Far );
+                RRHC_Best = Math.Min( FullEvaluation, RRHC_Best );
 
                 if ( FullEvaluation == 0 )
                 {
@@ -167,18 +198,40 @@ namespace CI_2
                         BackupSudoku( ref currentBest );
                 }
 
-                // Apply the operator ILS_S more times, disregarding the evaluation function
+                // Apply the operator S more times, disregarding the evaluation function
                 for ( int j = 0; j < S; j++ )
                     OperatorILS();
+
                 ILS_Restarts++;
             }
 
             Console.WriteLine( "\nDone with S = {0}", S );
         }
 
-        static void TabuSearch()
+        static void TabuSearch( int K )
         {
+            Console.WriteLine( "Starting with K = {0}", K );
+            Console.WriteLine( "Initial Fitness: {0}", FullEvaluate() );
+            bool Op_Result = true;
+            Tabu_States_Global = 0;
+            Tabu_List = new Queue<Tuple<int, int>>();
+            runtime = new Stopwatch();
+            runtime.Start();
 
+            while ( Op_Result && runtime.ElapsedMilliseconds <= 60000 )
+            {
+                Op_Result = OperatorTabu( Tabu_List, K );
+                Tabu_States_Global++;
+            }
+            runtime.Stop();
+
+            int FullEvaluation = FullEvaluate();
+            Tabu_OptFound = true;
+            Tabu_Results[ K ] = FullEvaluation;
+
+            Console.WriteLine( "Final Fitness: {0}", FullEvaluate() );
+            Console.WriteLine( "States Expanded: {0}", Tabu_States_Global );
+            Console.WriteLine( "Done with K = {0}", K );
         }
 
         #endregion
@@ -276,56 +329,52 @@ namespace CI_2
             //return false;
         }
 
-        static bool OperatorTabu()
+        static bool OperatorTabu( Queue<Tuple<int, int>> Taboo_List, int K )
         {
+            int eval1 = int.MaxValue, eval2 = int.MaxValue;
+
+            if ( Taboo_List.Count >= K )
+                Taboo_List.Dequeue();
+
+            for ( int i = 0; i < Nsq; i++ )
+            {
+                // To be able to switch, we need 2 or more non-fixated numbers in the block.
+                if ( OpenIdxPerBlock[ i ].Count < 2 )
+                    continue;
+
+                for ( int j = 0; j < OpenIdxPerBlock[ i ].Count; j++ )
+                    for ( int k = 0; k < OpenIdxPerBlock[ i ].Count; k++ )
+                    {
+                        if ( j == k ||
+                            Taboo_List.Contains( new Tuple<int, int>( OpenIdxPerBlock[ i ][ j ], OpenIdxPerBlock[ i ][ k ] ) ) ||
+                            Taboo_List.Contains( new Tuple<int, int>( OpenIdxPerBlock[ i ][ k ], OpenIdxPerBlock[ i ][ j ] ) ) )
+                            continue;
+
+                        //eval1 = Evaluate( OpenIdxPerBlock[ i ][ k ], OpenIdxPerBlock[ i ][ j ] );
+                        eval1 = FullEvaluate();
+                        // Rows and columns are already perfect, no switching.
+                        if ( eval1 == 0 )
+                            continue;
+
+                        // Switch the two fields.
+                        Switch( i, j, k );
+
+                        //eval2 = Evaluate( OpenIdxPerBlock[ i ][ k ], OpenIdxPerBlock[ i ][ j ] );
+                        eval2 = FullEvaluate();
+                        // Our fitness declined, undo the change.
+                        if ( eval1 < eval2 )
+                            Switch( i, j, k );
+                        // Improvement made, method done.
+                        else
+                        {
+                            Taboo_List.Enqueue( new Tuple<int, int>( OpenIdxPerBlock[ i ][ j ], OpenIdxPerBlock[ i ][ k ] ) );
+                            return true;
+                        }
+                    }
+            }
+
+            // No changes made, Sudoku is complete or local optimum found.
             return false;
-            //int eval1 = int.MaxValue, eval2 = int.MaxValue;
-
-            //for ( int i = 0; i < Nsq; i++ )
-            //{
-            //    // To be able to switch, we need 2 or more non-fixated numbers in the block.
-            //    if ( OpenIdxPerBlock[ i ].Count < 2 )
-            //        continue;
-
-            //    for ( int j = 0; j < OpenIdxPerBlock[ i ].Count; j++ )
-            //    {
-            //        for ( int k = 0; k < OpenIdxPerBlock[ i ].Count; k++ )
-            //        {
-            //            if ( j == k )
-            //                continue;
-
-            //            if ( CheckEval )
-            //            {
-            //                eval1 = Evaluate( OpenIdxPerBlock[ i ][ k ], OpenIdxPerBlock[ i ][ j ] );
-
-            //                // Rows and columns are already perfect, no switching.
-            //                if ( eval1 == 0 )
-            //                    continue;
-            //            }
-
-            //            // Switch the two fields.
-            //            Switch( i, j, k );
-
-            //            if ( CheckEval )
-            //            {
-            //                eval2 = Evaluate( OpenIdxPerBlock[ i ][ k ], OpenIdxPerBlock[ i ][ j ] );
-
-            //                // No improvement made, undo change.
-            //                if ( eval1 <= eval2 )
-            //                    Switch( i, j, k );
-            //                // Improvement made, method done.
-            //                else
-            //                    return true;
-            //            }
-
-            //            // We didn't check the evaluation, so we DEFINITELY made an improvement, surely.
-            //            else
-            //                return true;
-            //        }
-            //    }
-            //}
-            //// No changes made, Sudoku is complete or local optimum found.
-            //return false;
         }
 
         #endregion
@@ -336,8 +385,13 @@ namespace CI_2
         {
             for ( int i = 0; i < Nsq; i++ )
             {
+
+                if ( i % N == 0 )
+                    Console.WriteLine( "|---+---+---|" );
                 for ( int j = 0; j < Nsq; j++ )
                 {
+                    if ( j % N == 0 )
+                        Console.Write( '|' );
                     if ( Sudoku[ i * Nsq + j ] == 0 )
                         Console.Write( "." );
                     else
@@ -354,7 +408,7 @@ namespace CI_2
             Console.WriteLine( "How many Restarts did it take?\n{0}", RRHC_Restarts );
             Console.WriteLine( "How many States did we expand?\n{0}", RRHC_States_Global );
             Console.WriteLine( "How many States did we expand per Restart?\n{0}", RRHC_States_Avg );
-            Console.WriteLine( "How close did we get?\n{0}", RRHC_Best_So_Far );
+            Console.WriteLine( "How close did we get?\n{0}", RRHC_Best );
         }
 
         static void PrintILSResults()
@@ -364,7 +418,12 @@ namespace CI_2
                 Console.WriteLine( "\nBest Score for S = {0}: {1}", key, ILS_Results[ key ] );
         }
 
-        static void PrintTabuResults() { }
+        static void PrintTabuResults()
+        {
+            Console.WriteLine( "Solution?\n{0}", Tabu_OptFound );
+            foreach ( int key in Tabu_Results.Keys )
+                Console.WriteLine( "\nScore for K = {0}: {1}", key, Tabu_Results[ key ] );
+        }
 
         #endregion
 
@@ -383,7 +442,7 @@ namespace CI_2
         {
             int result = 0;
 
-            for ( int i = 0; i < Nsq; i++ )
+            for ( int i = 1; i <= Nsq; i++ )
             {
                 if ( !GetRow( idx1 ).Contains( i ) )
                     result++;
@@ -401,7 +460,7 @@ namespace CI_2
         {
             int result = 0;
 
-            for ( int i = 0; i < Nsq; i++ )
+            for ( int i = 1; i <= Nsq; i++ )
                 for ( int j = 0; j < Nsq; j++ )
                 {
                     if ( !GetRow( j ).Contains( i ) )
@@ -413,7 +472,7 @@ namespace CI_2
 
             return result;
         }
-        
+
         static int[] GetBlockIndices( int which )
         {
             int[] result = new int[ Nsq ];
@@ -495,7 +554,7 @@ namespace CI_2
                 list[ n ] = value;
             }
         }
-        
+
         static int[] ParseTxtToArray( string Path )
         {
             string[] totString = new string[ Nsq * Nsq ];
@@ -530,7 +589,7 @@ namespace CI_2
 
             return result;
         }
-        
+
         #endregion
     }
 }
