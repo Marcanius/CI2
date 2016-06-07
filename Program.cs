@@ -10,28 +10,29 @@ namespace CI_2
 {
     class Program
     {
-        static int N = 3, Nsq;
+        static int N = 3, Nsq, MaxRestarts = 30;
         static int[] Sudoku;
         static Random rng;
         static List<int> startArray;
         static string SudokuPath = "E:\\Documents\\Visual Studio 2015\\Projects\\CI 2\\CI 2\\TestSudokuVeryEz.txt";
         static List<int>[] OpenIdxPerBlock, ClosedNumsPerBlock, OpenNumsPerBlock;
 
+        static bool RRHC_OptFound;
+        static int RRHC_Restarts, RRHC_States_Global, RRHC_States_Local, RRHC_States_Avg;
+        static int[] RRHC_Best_So_Far;
+
         static void Main( string[] args )
         {
             Nsq = N * N;
-            Sudoku = new int[ Nsq * Nsq ];
             rng = new Random();
 
-            Sudoku = ParseTxtToArray( SudokuPath );
+            ReadSudoku();
 
             OpenIdxPerBlock = new List<int>[ Nsq ];
             ClosedNumsPerBlock = new List<int>[ Nsq ];
             OpenNumsPerBlock = new List<int>[ Nsq ];
 
-            Console.WriteLine( GetCol( 80 ) );
-
-            //For each block
+            // For each block, find out which numbers are missing, and which fields are empty.
             for ( int i = 0; i < Nsq; i++ )
             {
                 OpenIdxPerBlock[ i ] = new List<int>();
@@ -39,7 +40,7 @@ namespace CI_2
                 OpenNumsPerBlock[ i ] = new List<int>();
                 int[] blockIdx = GetBlockIndices( i );
 
-                //For each digit
+                // Check each field.
                 for ( int j = 0; j < Nsq; j++ )
                 {
                     if ( Sudoku[ blockIdx[ j ] ] == 0 )
@@ -48,30 +49,62 @@ namespace CI_2
                         ClosedNumsPerBlock[ i ].Add( Sudoku[ blockIdx[ j ] ] );
                 }
 
+                // The missing numbers is the complement set of the numbers we already have.
                 for ( int j = 1; j <= Nsq; j++ )
-                {
                     if ( !ClosedNumsPerBlock[ i ].Contains( j ) )
                         OpenNumsPerBlock[ i ].Add( j );
-                }
-
-                Shuffle<int>( OpenNumsPerBlock[ i ] );
-                for ( int j = 0; j < OpenNumsPerBlock[ i ].Count(); j++ )
-                {
-                    Sudoku[ OpenIdxPerBlock[ i ][ j ] ] = OpenNumsPerBlock[ i ][ j ];
-                }
             }
-            //After this, the sudoku array has been initiated, every block contains numbers one through 9, having kept in mind the constraint of blocks, and without having moved the fixated spots.
 
-            Print();
-            Operator();
-            Print();
-            Operator();
-            Print();
+            FillSudoku();
+            // After this, the sudoku array has been initiated, every block contains numbers one through nine, having kept in mind the constraint of blocks, and without having moved the fixated spots.
+
+            RandomRestart();
+            PrintRRHCResults();
+            //Print();
+            //Operator();
+            //Print();
+            //Operator();
+            //Print();
         }
 
         static void RandomRestart()
         {
+            bool OperatorResult;
 
+            for ( int i = 0; i < MaxRestarts; i++ )
+            {
+                OperatorResult = true;
+
+                // Keep applying the operator until we have found an optimum
+                while ( OperatorResult )
+                {
+                    RRHC_States_Global++;
+                    RRHC_States_Local++;
+                    OperatorResult = Operator();
+                }
+
+                // Calculate the new average amount of states expanded per local optimum.
+                RRHC_States_Avg = (RRHC_States_Avg * RRHC_Restarts + RRHC_States_Local) / (RRHC_Restarts + 1);
+
+                // Check whether it was a local optimum or the solution.
+                int FullEvaluation = FullEvaluate();
+                if ( FullEvaluation == 0 )
+                {
+                    RRHC_OptFound = true;
+                    return;
+                }
+                // If we found a local optimum, start over.
+                else
+                {
+                    RRHC_Restarts++;
+                    RRHC_Best_So_Far = FullEvaluation;
+
+                    ReadSudoku();
+                    FillSudoku();
+                }
+            }
+
+            RRHC_OptFound = false;
         }
 
         static void ILS()
@@ -84,14 +117,16 @@ namespace CI_2
 
         }
 
-        static void Operator()
+        static bool Operator()
         {
             int eval1, eval2, tmp;
+
             for ( int i = 0; i < Nsq; i++ )
             {
                 // To be able to switch, we need 2 or more non-fixated numbers in the block.
                 if ( OpenIdxPerBlock[ i ].Count < 2 )
                     continue;
+
                 for ( int j = 0; j < OpenIdxPerBlock[ i ].Count; j++ )
                 {
                     for ( int k = 0; k < OpenIdxPerBlock[ i ].Count; k++ )
@@ -100,8 +135,9 @@ namespace CI_2
                             continue;
 
                         eval1 = Evaluate( OpenIdxPerBlock[ i ][ k ], OpenIdxPerBlock[ i ][ j ] );
+
+                        // Rows and columns already perfect, no switching.
                         if ( eval1 == 0 )
-                            // Rows and columns already perfect, no switching.
                             continue;
 
                         tmp = Sudoku[ OpenIdxPerBlock[ i ][ j ] ];
@@ -119,11 +155,12 @@ namespace CI_2
                         }
                         // Improvement made, method done.
                         else
-                            return;
+                            return true;
                     }
                 }
             }
-            //No changed made, Sudoku is complete or local optimum found.
+            // No changes made, Sudoku is complete or local optimum found.
+            return false;
         }
 
         static int Evaluate( int idx1, int idx2 )
@@ -144,6 +181,23 @@ namespace CI_2
             return result;
 
             return -1;
+        }
+
+        static int FullEvaluate()
+        {
+            int result = 0;
+
+            for ( int i = 0; i < Nsq; i++ )
+                for ( int j = 0; j < Nsq; j++ )
+                {
+                    if ( !GetRow( j ).Contains( i ) )
+                        result++;
+
+                    if ( !GetCol( j ).Contains( i ) )
+                        result++;
+                }
+
+            return result;
         }
 
         static int[] GetBlockIndices( int which )
@@ -181,6 +235,27 @@ namespace CI_2
             return result;
         }
 
+        static void ReadSudoku()
+        {
+            // Make REALLY sure it's empty
+            Sudoku = null;
+            Sudoku = new int[ Nsq * Nsq ];
+
+            Sudoku = ParseTxtToArray( SudokuPath );
+        }
+
+        static void FillSudoku()
+        {
+            // Fill each block with a permutation of the missing numbers
+            for ( int i = 0; i < Nsq; i++ )
+            {
+                Shuffle<int>( OpenNumsPerBlock[ i ] );
+
+                for ( int j = 0; j < OpenNumsPerBlock[ i ].Count(); j++ )
+                    Sudoku[ OpenIdxPerBlock[ i ][ j ] ] = OpenNumsPerBlock[ i ][ j ];
+            }
+        }
+
         static void Shuffle<T>( IList<T> list )
         {
             int n = list.Count;
@@ -210,6 +285,14 @@ namespace CI_2
             Console.WriteLine( "" );
         }
 
+        static void PrintRRHCResults()
+        {
+            Console.WriteLine( "Have we found the solution?\n{0}", RRHC_OptFound );
+            Console.WriteLine( "How many Restarts did it take?\n{0}", RRHC_Restarts );
+            Console.WriteLine( "How many States dId we expand?\n{0}", RRHC_States_Global );
+            Console.WriteLine( "HoE maMy States did wE expand per Restart?\n{0}", RRHC_States_Local_Avg );
+        }
+
         static int[] ParseTxtToArray( string Path )
         {
             string[] totString = new string[ Nsq * Nsq ];
@@ -220,10 +303,9 @@ namespace CI_2
             while ( read != null && read != "" )
             {
                 sa = read.Split( ' ' );
+
                 for ( int j = 0; j < Nsq; j++ )
-                {
                     totString[ offset + j ] = sa[ j ];
-                }
 
                 read = sr.ReadLine();
                 offset += Nsq;
@@ -237,16 +319,14 @@ namespace CI_2
                 // An empty space
                 if ( totString[ i ] == "." )
                     result[ i ] = 0;
+
                 // A non-empty space
                 else
                     result[ i ] = int.Parse( totString[ i ] );
             }
 
             return result;
-
         }
-
-
     }
 }
 
