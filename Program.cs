@@ -10,16 +10,18 @@ namespace CI_2
 {
     class Program
     {
-        static int N = 3, Nsq, RRHC_MaxRestarts = 10000, ILS_S = 6;
+        static int N = 3, Nsq, RRHC_MaxRestarts = 10000, ILS_MaxRestarts = 10000;
         static int[] Sudoku;
         static Random rng;
         static List<int> startArray;
-        static string SudokuPath = "E:\\Documents\\Visual Studio 2015\\Projects\\CI2\\CI2\\TestSudokuVeryEz.txt";
+        static string SudokuPath = "C:\\Users\\matti\\Documents\\GitHub\\CI2\\TestSudokuVeryEz.txt";
         static List<int>[] OpenIdxPerBlock, ClosedNumsPerBlock, OpenNumsPerBlock;
 
         static bool RRHC_OptFound, ILS_OptFound;
         static int RRHC_Restarts, RRHC_States_Global, RRHC_States_Local, RRHC_States_Avg, RRHC_Best_So_Far = int.MaxValue;
-        static int ILS_Restarts, ILS_States_Global, ILS_States_Local, ILS_States_Avg, ILS_Best_So_Far = int.MaxValue;
+        static int ILS_Restarts, ILS_States_Global, ILS_States_Local, ILS_States_Avg;
+        static int ILS_Best = int.MaxValue;
+        static Dictionary<int, int> ILS_Results;
 
         static void Main( string[] args )
         {
@@ -58,13 +60,20 @@ namespace CI_2
             FillSudoku();
             // After this, the sudoku array has been initiated, every block contains numbers one through nine, having kept in mind the constraint of blocks, and without having moved the fixated spots.
 
-            RandomRestart();
-            PrintRRHCResults();
-            //Print();
-            //Operator();
-            //Print();
-            //Operator();
-            //Print();
+            // RandomRestart();
+            //PrintRRHCResults();
+
+            ILS_Results = new Dictionary<int, int>();
+            ILS_Results.Add( 2, int.MaxValue );
+            ILS_Results.Add( 5, int.MaxValue );
+            ILS_Results.Add( 10, int.MaxValue );
+            ILS_Results.Add( 50, int.MaxValue );
+            ILS_Results.Add( 100, int.MaxValue );
+
+            Parallel.ForEach<int>( ILS_Results.Keys, x => ILS( x ) );
+
+            PrintILSResults();
+
             Console.ReadLine();
         }
 
@@ -81,7 +90,7 @@ namespace CI_2
                 {
                     RRHC_States_Global++;
                     RRHC_States_Local++;
-                    OperatorResult = Operator();
+                    OperatorResult = OperatorEval();
                 }
 
                 // Calculate the new average amount of states expanded per local optimum.
@@ -90,7 +99,7 @@ namespace CI_2
                 // Check whether it was a local optimum or the solution.
                 int FullEvaluation = FullEvaluate();
                 RRHC_Best_So_Far = Math.Min( FullEvaluation, RRHC_Best_So_Far );
-                
+
                 if ( FullEvaluation == 0 )
                 {
                     Print();
@@ -110,23 +119,47 @@ namespace CI_2
             RRHC_OptFound = false;
         }
 
-        static void ILS()
+        static void ILS( int S )
         {
             bool opResult = true;
+            int[] currentBest = new int[Nsq*Nsq];
+            BackupSudoku( ref currentBest );
 
-            // Do HillClimbing
-            while ( opResult )
+            for ( int i = 0; i < ILS_MaxRestarts; i++ )
             {
-                ILS_States_Global++;
-                ILS_States_Local++;
-                opResult = Operator();
+                // Do HillClimbing
+                while ( opResult )
+                {
+                    ILS_States_Global++;
+                    ILS_States_Local++;
+                    opResult = OperatorEval();
+                }
+
+                // Check if this is the solution
+                int FullEvaluation = FullEvaluate();
+                if ( FullEvaluation == 0 )
+                {
+                    ILS_OptFound = true;
+                    return;
+                }
+                else
+                {
+                    ILS_Results[S] = Math.Min( ILS_Results[S], FullEvaluation );
+                    // Reset to the previous optimum, and try again
+                    if ( FullEvaluation > ILS_Best )
+                        RestoreBackup( ref currentBest );
+                    // Backup the new best effort
+                    else
+                        BackupSudoku( ref currentBest );
+                }
+
+                // Apply the operator ILS_S more times, disregarding the evaluation function
+                for ( int j = 0; j < S; j++ )
+                    OperatorILS();
+                ILS_Restarts++;
             }
 
-            // Apply the operator ILS_S more times
-            for ( int i = 0; i < ILS_S; i++ )
-            {
-                Operator( false );
-            }
+            Console.WriteLine( "\nDone with S = {0}", S );
         }
 
         static void TabuSearch()
@@ -134,10 +167,11 @@ namespace CI_2
 
         }
 
-        static bool Operator( bool CheckEval = true, bool CheckTabu = false, List<Tuple<int, int>> TabuList = null )
+        static bool OperatorEval()
         {
-            int eval1 = int.MaxValue, eval2 = int.MaxValue, tmp;
+            int eval1, eval2;
 
+            // Traverse each block.
             for ( int i = 0; i < Nsq; i++ )
             {
                 // To be able to switch, we need 2 or more non-fixated numbers in the block.
@@ -145,50 +179,144 @@ namespace CI_2
                     continue;
 
                 for ( int j = 0; j < OpenIdxPerBlock[ i ].Count; j++ )
-                {
                     for ( int k = 0; k < OpenIdxPerBlock[ i ].Count; k++ )
                     {
                         if ( j == k )
                             continue;
 
-                        if ( CheckEval )
-                        {
-                            eval1 = Evaluate( OpenIdxPerBlock[ i ][ k ], OpenIdxPerBlock[ i ][ j ] );
+                        // Evaluate the current state
+                        eval1 = Evaluate( OpenIdxPerBlock[ i ][ k ], OpenIdxPerBlock[ i ][ j ] );
 
-                            // Rows and columns are already perfect, no switching.
-                            if ( eval1 == 0 )
-                                continue;
-                        }
+                        // Rows and columns are already perfect, no switching.
+                        if ( eval1 == 0 )
+                            continue;
 
                         // Switch the two fields.
-                        tmp = Sudoku[ OpenIdxPerBlock[ i ][ j ] ];
-                        Sudoku[ OpenIdxPerBlock[ i ][ j ] ] = Sudoku[ OpenIdxPerBlock[ i ][ k ] ];
-                        Sudoku[ OpenIdxPerBlock[ i ][ k ] ] = tmp;
+                        Switch( i, j, k );
 
-                        if ( CheckEval )
-                        {
-                            eval2 = Evaluate( OpenIdxPerBlock[ i ][ k ], OpenIdxPerBlock[ i ][ j ] );
+                        // Evaluate the successor
+                        eval2 = Evaluate( OpenIdxPerBlock[ i ][ k ], OpenIdxPerBlock[ i ][ j ] );
 
-                            // No improvement made, undo change.
-                            if ( eval1 <= eval2 )
-                            {
-                                tmp = Sudoku[ OpenIdxPerBlock[ i ][ j ] ];
-                                Sudoku[ OpenIdxPerBlock[ i ][ j ] ] = Sudoku[ OpenIdxPerBlock[ i ][ k ] ];
-                                Sudoku[ OpenIdxPerBlock[ i ][ k ] ] = tmp;
-                            }
-                            // Improvement made, method done.
-                            else
-                                return true;
-                        }
-
-                        // We didn't check the evaluation, so we DEFINITELY made an improvement, surely.
+                        // No improvement made, undo change.
+                        if ( eval1 <= eval2 )
+                            Switch( i, j, k );
+                        // Improvement made, method done.
                         else
                             return true;
                     }
-                }
             }
-            // No changes made, Sudoku is complete or local optimum found.
+
+            // No changes made in the entire Sudoku, Sudoku is complete or local optimum found.
             return false;
+        }
+
+        static void OperatorILS()
+        {
+            int block = rng.Next( Nsq );
+            int j = 0, k = 0;
+
+            while ( j == k )
+            {
+                j = rng.Next( OpenIdxPerBlock[ block ].Count );
+                k = rng.Next( OpenIdxPerBlock[ block ].Count );
+            }
+
+            Switch( block, j, k );
+
+            //List<int> blocks = new List<int>();
+            //for ( int i = 1; i <= Nsq; i++ )
+            //    blocks.Add( i );
+
+            //// Shuffle so we traverse the blocks in a random order.
+            //Shuffle( blocks );
+
+            //// Traverse each block.
+            //for ( int blockid = 0; blockid < Nsq; blockid++ )
+            //{
+            //    int i = blocks[ blockid ];
+
+            //    // To be able to switch, we need 2 or more non-fixated numbers in the block.
+            //    if ( OpenIdxPerBlock[ i ].Count < 2 )
+            //        continue;
+
+            //    // For each available number, find a partner
+            //    for ( int j = 0; j < OpenIdxPerBlock[ i ].Count; j++ )
+            //        for ( int k = 0; k < OpenIdxPerBlock[ i ].Count; k++ )
+            //        {
+            //            if ( j == k )
+            //                continue;
+
+            //            // Switch the two fields.
+            //            Switch( i, j, k );
+
+            //            // We didn't check the evaluation, so we DEFINITELY made an improvement, surely.
+            //            return true;
+            //        }
+            //}
+
+            //// No changes made, Sudoku is complete or local optimum found.
+            //return false;
+        }
+
+        static bool OperatorTabu()
+        {
+            return false;
+            //int eval1 = int.MaxValue, eval2 = int.MaxValue;
+
+            //for ( int i = 0; i < Nsq; i++ )
+            //{
+            //    // To be able to switch, we need 2 or more non-fixated numbers in the block.
+            //    if ( OpenIdxPerBlock[ i ].Count < 2 )
+            //        continue;
+
+            //    for ( int j = 0; j < OpenIdxPerBlock[ i ].Count; j++ )
+            //    {
+            //        for ( int k = 0; k < OpenIdxPerBlock[ i ].Count; k++ )
+            //        {
+            //            if ( j == k )
+            //                continue;
+
+            //            if ( CheckEval )
+            //            {
+            //                eval1 = Evaluate( OpenIdxPerBlock[ i ][ k ], OpenIdxPerBlock[ i ][ j ] );
+
+            //                // Rows and columns are already perfect, no switching.
+            //                if ( eval1 == 0 )
+            //                    continue;
+            //            }
+
+            //            // Switch the two fields.
+            //            Switch( i, j, k );
+
+            //            if ( CheckEval )
+            //            {
+            //                eval2 = Evaluate( OpenIdxPerBlock[ i ][ k ], OpenIdxPerBlock[ i ][ j ] );
+
+            //                // No improvement made, undo change.
+            //                if ( eval1 <= eval2 )
+            //                    Switch( i, j, k );
+            //                // Improvement made, method done.
+            //                else
+            //                    return true;
+            //            }
+
+            //            // We didn't check the evaluation, so we DEFINITELY made an improvement, surely.
+            //            else
+            //                return true;
+            //        }
+            //    }
+            //}
+            //// No changes made, Sudoku is complete or local optimum found.
+            //return false;
+        }
+
+        static void Switch( int Block, int Idx1, int Idx2 )
+        {
+            List<int> openIdcs = OpenIdxPerBlock[ Block ];
+
+            int tmp = Sudoku[ openIdcs[ Idx1 ] ];
+            Sudoku[ openIdcs[ Idx1 ] ] = Sudoku[ openIdcs[ Idx2 ] ];
+            Sudoku[ openIdcs[ Idx2 ] ] = tmp;
         }
 
         static int Evaluate( int idx1, int idx2 )
@@ -222,16 +350,14 @@ namespace CI_2
                     if ( !GetCol( j ).Contains( i ) )
                         result++;
                 }
-            if ( result == 0 )
-            {
 
-            }
             return result;
         }
 
         static int[] GetBlockIndices( int which )
         {
             int[] result = new int[ Nsq ];
+
             // Take all the rows that form the block, and with the correct offset, write the relevant spaces to the result.            
             int offset = (which % N) * N;
 
@@ -285,6 +411,18 @@ namespace CI_2
             }
         }
 
+        static void BackupSudoku( ref int[] toBackupTo )
+        {
+            for ( int i = 0; i < Nsq * Nsq; i++ )
+                toBackupTo[ i ] = Sudoku[ i ];
+        }
+
+        static void RestoreBackup( ref int[] toRestoreFrom )
+        {
+            for ( int i = 0; i < Nsq * Nsq; i++ )
+                Sudoku[ i ] = toRestoreFrom[ i ];
+        }
+        
         static void Shuffle<T>( IList<T> list )
         {
             int n = list.Count;
@@ -318,10 +456,19 @@ namespace CI_2
         {
             Console.WriteLine( "Have we found the solution?\n{0}", RRHC_OptFound );
             Console.WriteLine( "How many Restarts did it take?\n{0}", RRHC_Restarts );
-            Console.WriteLine( "How many States dId we expand?\n{0}", RRHC_States_Global );
-            Console.WriteLine( "HoE maMy States did wE expand per Restart?\n{0}", RRHC_States_Avg );
+            Console.WriteLine( "How many States did we expand?\n{0}", RRHC_States_Global );
+            Console.WriteLine( "How many States did we expand per Restart?\n{0}", RRHC_States_Avg );
             Console.WriteLine( "How close did we get?\n{0}", RRHC_Best_So_Far );
         }
+
+        static void PrintILSResults()
+        {
+            Console.WriteLine( "Solution?\n{0}", ILS_OptFound );
+            foreach(int key in ILS_Results.Keys)
+            Console.WriteLine( "\nBest Score for S = {0}: {1}", key, ILS_Results[key] );
+        }
+
+        static void PrintTabuResults() { }
 
         static int[] ParseTxtToArray( string Path )
         {
@@ -359,5 +506,3 @@ namespace CI_2
         }
     }
 }
-
-
